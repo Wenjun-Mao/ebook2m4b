@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Job {{ job.id }}</h2>
+  {% include "partials/job_card.html" %}
+  <p><a href="/">Back to home</a></p>
+</section>
+{% endblock %}

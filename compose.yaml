@@ -1,0 +1,47 @@
+name: ebook2m4b
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m ebook2m4b.web_ui.app
+    restart: unless-stopped
+    ports:
+      - "7777:7777"
+    environment:
+      EBOOK2M4B_HOST: 0.0.0.0
+      EBOOK2M4B_PORT: 7777
+      EBOOK2M4B_DATA_DIR: /data
+      EBOOK2M4B_DATABASE_URL: sqlite:////data/ebook2m4b.db
+      EBOOK2M4B_REDIS_URL: redis://redis:6379/0
+      HF_HOME: /data/cache/huggingface
+      TRANSFORMERS_CACHE: /data/cache/huggingface
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ${EBOOK2M4B_DATA_HOST_PATH:-./data}:/data
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m ebook2m4b.worker
+    restart: unless-stopped
+    gpus: all
+    environment:
+      EBOOK2M4B_DATA_DIR: /data
+      EBOOK2M4B_DATABASE_URL: sqlite:////data/ebook2m4b.db
+      EBOOK2M4B_REDIS_URL: redis://redis:6379/0
+      HF_HOME: /data/cache/huggingface
+      TRANSFORMERS_CACHE: /data/cache/huggingface
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ${EBOOK2M4B_DATA_HOST_PATH:-./data}:/data
+    depends_on:
+      - redis

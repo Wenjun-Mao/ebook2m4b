@@ -1,0 +1,637 @@
+import os
+import sys
+# Automatically enable MPS fallback on Apple Silicon macOS
+if sys.platform == 'darwin':
+    os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+import argparse
+import numpy as np
+import re
+import soundfile
+import subprocess
+import torch
+import warnings
+from tqdm import tqdm
+from kokoro import KPipeline
+
+from bs4 import BeautifulSoup
+import ebooklib
+from ebooklib import epub
+import soundfile as sf
+from lxml import etree
+from mutagen import mp4
+import nltk
+from nltk.tokenize import sent_tokenize
+from PIL import Image
+from pydub import AudioSegment
+import zipfile
+
+
+namespaces = {
+   "calibre":"http://calibre.kovidgoyal.net/2009/metadata",
+   "dc":"http://purl.org/dc/elements/1.1/",
+   "dcterms":"http://purl.org/dc/terms/",
+   "opf":"http://www.idpf.org/2007/opf",
+   "u":"urn:oasis:names:tc:opendocument:xmlns:container",
+   "xsi":"http://www.w3.org/2001/XMLSchema-instance",
+}
+
+warnings.filterwarnings("ignore", module="ebooklib.epub")
+
+def ensure_punkt():
+    try:
+        nltk.data.find("tokenizers/punkt")
+    except LookupError:
+        nltk.download("punkt")
+    try:
+        nltk.data.find("tokenizers/punkt_tab")
+    except LookupError:
+        nltk.download("punkt_tab")
+
+def chap2text_epub(chap, item_id=None, toc=None):
+    """
+    Extract chapter title and paragraphs from an EPUB chapter.
+    
+    Args:
+        chap: The chapter content (HTML).
+        item_id: The ID of the item in the EPUB spine (for fallback naming).
+        toc: The EPUB's table of contents (for fallback title extraction).
+    
+    Returns:
+        tuple: (chapter_title_text, paragraphs)
+    """
+    blacklist = [
+        "[document]",
+        "noscript",
+        "header",
+        "html",
+        "meta",
+        "head",
+        "input",
+        "script",
+    ]
+    paragraphs = []
+    soup = BeautifulSoup(chap, "html.parser")
+
+    # Step 1: Try to find chapter title in heading tags (<h1>, <h2>, <h3>)
+    heading_tags = ['h1', 'h2', 'h3']
+    chapter_title_text = None
+    for tag in heading_tags:
+        heading = soup.find(tag)
+        if heading and heading.text.strip():
+            chapter_title_text = heading.text.strip()
+            print(f"Found title in <{tag}>: '{chapter_title_text}'")
+            break
+
+    # Step 2: If no heading found, try elements with common class names
+    if not chapter_title_text:
+        common_classes = ['chapter', 'chapter-title', 'title', 'heading']
+        for class_name in common_classes:
+            element = soup.find(class_=class_name)
+            if element and element.text.strip():
+                chapter_title_text = element.text.strip()
+                print(f"Found title in class '{class_name}': '{chapter_title_text}'")
+                break
+
+    # Step 3: Fallback to TOC if provided
+    if not chapter_title_text and toc and item_id:
+        for toc_item in toc:
+            if toc_item.href.split('#')[0] == item_id:
+                chapter_title_text = toc_item.title
+                print(f"Found title in TOC for item '{item_id}': '{chapter_title_text}'")
+                break
+
+    # Step 4: Fallback to item ID or generic name
+    if not chapter_title_text:
+        chapter_title_text = item_id.replace('.xhtml', '').replace('_', ' ').title() if item_id else None
+        print(f"No title found, using fallback: '{chapter_title_text}'")
+
+    # Remove footnotes (links with only numbers)
+    for a in soup.findAll("a", href=True):
+        if not any(char.isalpha() for char in a.text):
+            a.extract()
+
+    # Remove superscript numbers (e.g., footnote markers)
+    for sup in soup.findAll("sup"):
+        if sup.text.isdigit():
+            sup.extract()
+
+    # Extract paragraphs
+    chapter_paragraphs = soup.find_all("p")
+    if not chapter_paragraphs:
+        print(f"No <p> tags found in '{chapter_title_text or item_id}'. Trying <div>.")
+        chapter_paragraphs = soup.find_all("div")
+
+    for p in chapter_paragraphs:
+        paragraph_text = "".join(p.strings).strip()
+        if paragraph_text:
+            paragraphs.append(paragraph_text)
+
+    return chapter_title_text, paragraphs
+
+def get_epub_cover(epub_path):
+    try:
+        with zipfile.ZipFile(epub_path) as z:
+            t = etree.fromstring(z.read("META-INF/container.xml"))
+            rootfile_path =  t.xpath("/u:container/u:rootfiles/u:rootfile",
+                                        namespaces=namespaces)[0].get("full-path")
+
+            t = etree.fromstring(z.read(rootfile_path))
+            cover_meta = t.xpath("//opf:metadata/opf:meta[@name='cover']",
+                                        namespaces=namespaces)
+            if not cover_meta:
+                print("No cover image found.")
+                return None
+            cover_id = cover_meta[0].get("content")
+
+            cover_item = t.xpath("//opf:manifest/opf:item[@id='" + cover_id + "']",
+                                            namespaces=namespaces)
+            if not cover_item:
+                print("No cover image found.")
+                return None
+            cover_href = cover_item[0].get("href")
+            cover_path = os.path.join(os.path.dirname(rootfile_path), cover_href)
+            if os.name == 'nt' and '\\' in cover_path:
+                cover_path = cover_path.replace("\\", "/")
+            return z.open(cover_path)
+    except FileNotFoundError:
+        print(f"Could not get cover image of {epub_path}")
+
+def export(book, sourcefile):
+    book_contents = []
+    cover_image = get_epub_cover(sourcefile)
+    image_path = None
+
+    if cover_image is not None:
+        image = Image.open(cover_image)
+        image_filename = sourcefile.replace(".epub", ".png")
+        image_path = os.path.join(image_filename)
+        image.save(image_path)
+        print(f"Cover image saved to {image_path}")
+
+    # Get the table of contents
+    toc = book.get_toc() if hasattr(book, 'get_toc') else []
+
+    spine_ids = [spine_tuple[0] for spine_tuple in book.spine if spine_tuple[1] == 'yes']
+    items = {item.get_id(): item for item in book.get_items() if item.get_type() == ebooklib.ITEM_DOCUMENT}
+
+    for id in spine_ids:
+        item = items.get(id)
+        if item is None:
+            continue
+        # Pass item_id and toc to chap2text_epub
+        chapter_title, chapter_paragraphs = chap2text_epub(item.get_content(), item_id=id, toc=toc)
+        book_contents.append({"title": chapter_title, "paragraphs": chapter_paragraphs})
+
+    outfile = sourcefile.replace(".epub", ".txt")
+    check_for_file(outfile)
+    print(f"Exporting {sourcefile} to {outfile}")
+    author = book.get_metadata("DC", "creator")[0][0]
+    booktitle = book.get_metadata("DC", "title")[0][0]
+
+    with open(outfile, "w", encoding='utf-8') as file:
+        file.write(f"Title: {booktitle}\n")
+        file.write(f"Author: {author}\n\n")
+        file.write(f"# Title\n")
+        file.write(f"{booktitle}, by {author}\n\n")
+        for i, chapter in enumerate(book_contents, start=1):
+            if not chapter["paragraphs"] or chapter["paragraphs"] == ['']:
+                continue
+            else:
+                # Use chapter title if available, otherwise fallback to "Part {i}"
+                title = chapter["title"] if chapter["title"] else f"Part {i}"
+                file.write(f"# {title}\n\n")
+                for paragraph in chapter["paragraphs"]:
+                    clean = re.sub(r'[\s\n]+', ' ', paragraph)
+                    clean = re.sub(r'[“”]', '"', clean)  # Curly double quotes to standard double quotes
+                    clean = re.sub(r'[‘’]', "'", clean)  # Curly single quotes to standard single quotes
+                    clean = re.sub(r'--', ', ', clean)
+                    file.write(f"{clean}\n\n")
+
+    return book_contents
+
+def get_book(sourcefile):
+    book_contents = []
+    book_title = sourcefile
+    book_author = "Unknown"
+    chapter_titles = []
+
+    with open(sourcefile, "r", encoding="utf-8") as file:
+        current_chapter = {"title": "blank", "paragraphs": []}
+        initialized_first_chapter = False
+        lines_skipped = 0
+        for line in file:
+
+            if lines_skipped < 2 and (line.startswith("Title") or line.startswith("Author")):
+                lines_skipped += 1
+                if line.startswith('Title: '):
+                    book_title = line.replace('Title: ', '').strip()
+                elif line.startswith('Author: '):
+                    book_author = line.replace('Author: ', '').strip()
+                continue
+
+            line = line.strip()
+            if line.startswith("#"):
+                if current_chapter["paragraphs"] or not initialized_first_chapter:
+                    if initialized_first_chapter:
+                        book_contents.append(current_chapter)
+                    current_chapter = {"title": None, "paragraphs": []}
+                    initialized_first_chapter = True
+                chapter_title = line[1:].strip()
+                if any(c.isalnum() for c in chapter_title):
+                    current_chapter["title"] = chapter_title
+                    chapter_titles.append(current_chapter["title"])
+                else:
+                    current_chapter["title"] = "blank"
+                    chapter_titles.append("blank")
+            elif line:
+                if not initialized_first_chapter:
+                    chapter_titles.append("blank")
+                    initialized_first_chapter = True
+                if any(char.isalnum() for char in line):
+                    sentences = sent_tokenize(line)
+                    cleaned_sentences = [s for s in sentences if any(char.isalnum() for char in s)]
+                    line = ' '.join(cleaned_sentences)
+                    current_chapter["paragraphs"].append(line)
+
+        # Append the last chapter if it contains any paragraphs.
+        if current_chapter["paragraphs"]:
+            book_contents.append(current_chapter)
+
+    return book_contents, book_title, book_author, chapter_titles
+
+def sort_key(s):
+    # extract number from the string
+    return int(re.findall(r'\d+', s)[0])
+
+def check_for_file(filename):
+    if os.path.isfile(filename):
+        print(f"The file '{filename}' already exists.")
+        overwrite = input("Do you want to overwrite the file? (y/n): ")
+        if overwrite.lower() != 'y':
+            print("Exiting without overwriting the file.")
+            sys.exit()
+        else:
+            os.remove(filename)
+
+def append_silence(tempfile, duration=1200):
+    audio = AudioSegment.from_file(tempfile)
+    # Create a silence segment
+    silence = AudioSegment.silent(duration)
+    # Append the silence segment to the audio
+    combined = audio + silence
+    # Save the combined audio back to file
+    combined.export(tempfile, format="flac")
+
+def break_long_sentence(sentence, max_length=200):
+    # Split sentence based on commas
+    comma_segments = sentence.split(',')
+    segments = []
+    current_segment = ""
+    for segment in comma_segments:
+        # Check if adding the next segment exceeds max_length
+        temp_segment = current_segment + ("," if current_segment else "") + segment
+        if len(temp_segment) > max_length:
+            # Add the current segment to the list and reset it
+            if current_segment:
+                segments.append(current_segment)
+            # Start a new segment with the current part
+            current_segment = segment.strip()
+        else:
+            # Continue building the current segment
+            current_segment = temp_segment.strip()
+    # Don't forget to add the last segment if it exists
+    if current_segment:
+        segments.append(current_segment)
+    return segments
+
+def process_large_text(line):
+    # Tokenize the text into sentences
+    sentences = sent_tokenize(line)
+    # Initialize a list to store processed sentences
+    results = []
+    
+    i = 0
+    while i < len(sentences):
+        sentence = sentences[i]
+        word_count = len(sentence.split())
+        
+        # Combine with the next sentence if this one has fewer than 8 words
+        if word_count < 8 and i + 1 < len(sentences):
+            # Combine the current and next sentence
+            sentence = sentence + ' ' + sentences[i + 1]
+            i += 1  # Skip the next sentence since it's already combined
+
+        if len(sentence) > 500:
+            # Break the long sentences into smaller parts using commas
+            results.extend(break_long_sentence(sentence, max_length=350))
+        else:
+            results.append(sentence)
+        
+        i += 1  # Move to the next sentence
+    
+    # Before returning, combine last elements if they are too short
+    if results and len(results[-1].split()) < 8:
+        if len(results) > 1:
+            # Combine the last two sentences if they are both short
+            results[-2] += ' ' + results[-1]
+            results.pop()
+            
+    return results
+
+def conditional_sentence_case(sent):
+    # Split the sentence into words
+    words = sent.split()
+    length = len(words)
+    # Iterate through words to check for three consecutive uppercase words
+    for i in range(length - 2):
+        if words[i].isupper() and words[i+1].isupper() and words[i+2].isupper():
+            # Convert the entire sentence to lowercase and capitalize the first letter
+            sent = ' '.join(words).lower().capitalize()
+            break  # No need to continue checking once a match is found
+    return sent
+
+def kokoro_read(paragraph, speaker, filename, pipeline, speed):
+    audio_segments = []
+    sentences = process_large_text(paragraph)
+    for sent in sentences:
+        sent = conditional_sentence_case(sent.strip())
+        for gs, ps, audio in pipeline(sent, voice=speaker, speed=speed, split_pattern=r'\n\n\n'):
+            audio_segments.append(audio)
+
+    final_audio = np.concatenate(audio_segments)
+    soundfile.write(filename, final_audio, 24000)
+
+def read_book(book_contents, speaker, paragraphpause, speed, notitles, progress_callback=None, cancel_check=None):
+    current_device_name = torch.get_default_device() if torch.get_default_device() else 'cpu'
+    current_device = torch.device(current_device_name)
+    print(f"Attempting to use device: {current_device}")
+
+    pipeline = KPipeline(lang_code=speaker[0])
+
+    # Explicitly move the model to the current default device (e.g., 'xpu')
+    if hasattr(pipeline, 'model') and pipeline.model is not None:
+        try:
+            pipeline.model.to(current_device)
+            print(f"Kokoro model explicitly moved to {current_device}")
+        except Exception as e:
+            print(f"Error moving Kokoro model to {current_device}: {e}")
+    else:
+        print("Warning: KPipeline does not have a 'model' attribute or model is None.")
+
+    segments = []
+    chapter_total = len(book_contents)
+    paragraph_total = sum(len(chapter.get("paragraphs", [])) for chapter in book_contents)
+    paragraph_done = 0
+
+    should_cancel = cancel_check or (lambda: False)
+
+    if should_cancel():
+        raise RuntimeError("Discarded by user.")
+
+    if progress_callback is not None:
+        progress_callback(0, chapter_total, paragraph_done, paragraph_total)
+
+    for i, chapter in enumerate(book_contents, start=1):
+        if should_cancel():
+            raise RuntimeError("Discarded by user.")
+
+        files = []
+        partname = f"part{i}.flac"
+        print(f"\n\n")
+        chapter_paragraphs = chapter.get("paragraphs", [])
+
+        if progress_callback is not None:
+            progress_callback(i, chapter_total, paragraph_done, paragraph_total)
+
+        if os.path.isfile(partname):
+            print(f"{partname} exists, skipping to next chapter")
+            paragraph_done += len(chapter_paragraphs)
+            if progress_callback is not None:
+                progress_callback(i, chapter_total, paragraph_done, paragraph_total)
+            segments.append(partname)
+        else:
+            print(f"Chapter: {chapter['title']}\n")
+            print(f"Section name: \"{chapter['title']}\"")
+            if chapter["title"] == "":
+                chapter["title"] = "blank"
+            if chapter["title"] != "Title" and notitles != True:
+                title_temp = "title.flac"
+                if not os.path.isfile(title_temp):
+                    kokoro_read(chapter['title'] + ".", speaker, "title_temp.wav", pipeline, speed)
+                    append_silence("title_temp.wav", paragraphpause)
+                    # Convert to flac
+                    audio = AudioSegment.from_file("title_temp.wav")
+                    audio.export(title_temp, format="flac")
+                    os.remove("title_temp.wav")
+                files.append(title_temp)
+
+            for pindex, paragraph in enumerate(
+                tqdm(chapter_paragraphs, desc=f"Generating audio files: ",unit='pg'),
+                start=1,
+            ):
+                if should_cancel():
+                    raise RuntimeError("Discarded by user.")
+
+                ptemp = f"pgraphs{i}_{pindex}.flac"
+                if os.path.isfile(ptemp):
+                    print(f"{ptemp} exists, skipping to next paragraph")
+                else:
+                    #sentences = sent_tokenize(paragraph)
+                    filenames = ["sntnc1.wav"]
+                    kokoro_read(paragraph, speaker, "sntnc1.wav", pipeline, speed)                    
+                    append_silence("sntnc1.wav", paragraphpause)
+                    # combine sentences in paragraph
+                    sorted_files = sorted(filenames, key=sort_key)
+                    if os.path.exists("sntnc0.wav"):
+                        sorted_files.insert(0, "sntnc0.wav")
+                    combined = AudioSegment.empty()
+                    for file in sorted_files:
+                        combined += AudioSegment.from_file(file)
+                    combined.export(ptemp, format="flac")
+                    for file in sorted_files:
+                        os.remove(file)
+                files.append(ptemp)
+                paragraph_done += 1
+                if progress_callback is not None:
+                    progress_callback(i, chapter_total, paragraph_done, paragraph_total)
+            # combine paragraphs into chapter
+            if files:
+                append_silence(files[-1], 2000)
+                combined = AudioSegment.empty()
+                for file in files:
+                    combined += AudioSegment.from_file(file)
+                combined.export(partname, format="flac")
+                for file in files:
+                    os.remove(file)
+                segments.append(partname)
+
+    if progress_callback is not None:
+        progress_callback(chapter_total, chapter_total, paragraph_total, paragraph_total)
+    return segments
+
+def generate_metadata(files, author, title, chapter_titles):
+    chap = 0
+    start_time = 0
+    with open("FFMETADATAFILE", "w") as file:
+        file.write(";FFMETADATA1\n")
+        file.write(f"ARTIST={author}\n")
+        file.write(f"ALBUM={title}\n")
+        file.write(f"TITLE={title}\n")
+        file.write("DESCRIPTION=Made with https://github.com/aedocw/epub2tts-kokoro\n")
+        for file_name in files:
+            duration = get_duration(file_name)
+            file.write("[CHAPTER]\n")
+            file.write("TIMEBASE=1/1000\n")
+            file.write(f"START={start_time}\n")
+            file.write(f"END={start_time + duration}\n")
+            file.write(f"title={chapter_titles[chap]}\n")
+            chap += 1
+            start_time += duration
+
+def get_duration(file_path):
+    audio = AudioSegment.from_file(file_path)
+    duration_milliseconds = len(audio)
+    return duration_milliseconds
+
+def make_m4b(files, sourcefile, speaker):
+    filelist = "filelist.txt"
+    basefile = sourcefile.replace(".txt", "")
+    outputm4a = f"{basefile} ({speaker}).m4a"
+    outputm4b = f"{basefile} ({speaker}).m4b"
+    with open(filelist, "w") as f:
+        for filename in files:
+            filename = filename.replace("'", "'\\''")
+            f.write(f"file '{filename}'\n")
+    ffmpeg_command = [
+        "ffmpeg",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        filelist,
+        "-codec:a",
+        "flac",
+        "-f",
+        "mp4",
+        "-strict",
+        "-2",
+        outputm4a,
+    ]
+    subprocess.run(ffmpeg_command)
+    ffmpeg_command = [
+        "ffmpeg",
+        "-i",
+        outputm4a,
+        "-i",
+        "FFMETADATAFILE",
+        "-map_metadata",
+        "1",
+        "-codec",
+        "aac",
+        outputm4b,
+    ]
+    subprocess.run(ffmpeg_command)
+    os.remove(filelist)
+    os.remove("FFMETADATAFILE")
+    os.remove(outputm4a)
+    for f in files:
+        os.remove(f)
+    return outputm4b
+
+def add_cover(cover_img, filename):
+    try:
+        if os.path.isfile(cover_img):
+            m4b = mp4.MP4(filename)
+            cover_image = open(cover_img, "rb").read()
+            m4b["covr"] = [mp4.MP4Cover(cover_image)]
+            m4b.save()
+        else:
+            print(f"Cover image {cover_img} not found")
+    except:
+        print(f"Cover image {cover_img} not found")
+
+def main():
+     # Check for GPU
+    if torch.cuda.is_available():
+        print('Nvidia GPU available. Setting as default device.')
+        torch.set_default_device('cuda')
+    elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+        print('Intel XPU (GPU) available. Setting as default device.')
+        torch.set_default_device('xpu')
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        print('Apple MPS GPU available. Setting as default device.')
+        torch.set_default_device('mps')
+    elif hasattr(torch.backends, 'rocm') and torch.backends.rocm.is_available():
+        print('AMD ROCm GPU available. Setting as default device.')
+        torch.set_default_device('rocm')
+    elif torch.is_vulkan_available():
+        print('Vulkan GPU available. Setting as default device.')
+        torch.set_default_device('vulkan')
+    else:
+        print('No GPU available. Using CPU.')
+        torch.set_default_device('cpu')
+        
+    parser = argparse.ArgumentParser(
+        prog="epub2tts-kokoro",
+        description="Read a text file to audiobook format",
+    )
+    parser.add_argument("sourcefile", type=str, help="The epub or text file to process")
+    parser.add_argument(
+        "--speaker",
+        type=str,
+        nargs="?",
+        const="af_heart",
+        default="af_heart",
+        help="Speaker to use (ex af_heart)",
+    )
+    parser.add_argument(
+        "--cover",
+        type=str,
+        help="jpg image to use for cover",
+    )
+    parser.add_argument(
+        "--paragraphpause",
+        type=int,
+        default=600,
+        help="duration of pause after paragraph, in milliseconds (default: 600)"
+    )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.3,
+        help="reading speed (default: 1.3)"
+    )
+    parser.add_argument(
+        "--notitles",
+        action="store_true",
+        help="Do not read chapter titles"
+    )
+
+    args = parser.parse_args()
+    print(args)
+
+    ensure_punkt()
+
+    #If we get an epub, export that to txt file, then exit
+    if args.sourcefile.endswith(".epub"):
+        book = epub.read_epub(args.sourcefile)
+        export(book, args.sourcefile)
+        base_name = os.path.splitext(os.path.basename(args.sourcefile))[0]
+        print(
+            f"EPUB extraction complete. To generate audio, run again with: "
+            f"{base_name}.txt --cover {base_name}.png --speaker {args.speaker}"
+        )
+        exit()
+
+   
+
+
+    book_contents, book_title, book_author, chapter_titles = get_book(args.sourcefile)
+    files = read_book(book_contents, args.speaker, args.paragraphpause, args.speed, args.notitles)
+    generate_metadata(files, book_author, book_title, chapter_titles)
+    m4bfilename = make_m4b(files, args.sourcefile, args.speaker)
+    add_cover(args.cover, m4bfilename)
+    
+if __name__ == "__main__":
+    main()

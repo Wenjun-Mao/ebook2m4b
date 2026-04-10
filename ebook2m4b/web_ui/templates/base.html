@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_name }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script>
+    function toggleJobDetails(event) {
+      const button = event.currentTarget;
+      const targetId = button.getAttribute("data-details-target");
+      if (!targetId) {
+        return;
+      }
+      const panel = document.getElementById(targetId);
+      if (!panel) {
+        return;
+      }
+
+      const expanded = button.getAttribute("aria-expanded") === "true";
+      if (expanded) {
+        panel.setAttribute("hidden", "hidden");
+        button.setAttribute("aria-expanded", "false");
+      } else {
+        panel.removeAttribute("hidden");
+        button.setAttribute("aria-expanded", "true");
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>{{ app_name }}</h1>
+    <p>Parse EPUB or TXT, select chapters, then generate M4B with queued background jobs.</p>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

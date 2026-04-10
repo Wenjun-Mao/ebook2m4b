@@ -1,0 +1,96 @@
+<div
+  id="job-live-{{ job.id }}"
+  class="job-live"
+  {% if job.can_poll %}
+    hx-get="/jobs/{{ job.id }}/live"
+    hx-trigger="load, every 3s"
+    hx-swap="outerHTML"
+  {% endif %}
+>
+  <p><strong>Status:</strong> {{ job.status.replace('_', ' ').title() }}</p>
+  <p><strong>Stage:</strong> {{ job.stage }}</p>
+  <p><strong>Speaker:</strong> {{ job.speaker }}</p>
+
+  {% if job.chapter_total > 0 %}
+    <p class="muted">Chapter progress: {{ job.chapter_index }}/{{ job.chapter_total }}</p>
+  {% endif %}
+  {% if job.paragraph_total > 0 %}
+    <p class="muted">Text units: {{ job.paragraph_done }}/{{ job.paragraph_total }}</p>
+  {% endif %}
+
+  <div class="progress-block">
+    <p class="progress-label">Overall progress</p>
+    <progress class="progress-native" value="{{ job.progress }}" max="100"></progress>
+    <p class="muted">{{ job.progress }}%</p>
+  </div>
+
+  <div class="progress-block">
+    <p class="progress-label">Current stage progress</p>
+    <progress class="progress-native stage" value="{{ job.stage_progress }}" max="100"></progress>
+    <p class="muted">{{ job.stage_progress }}%</p>
+  </div>
+
+  {% if job.error_message %}
+    <div class="notice error">{{ job.error_message }}</div>
+  {% endif %}
+
+  {% if job.selection_ready and job.chapter_manifest %}
+    <section class="chapter-picker">
+      <p class="progress-label">Step 2: Select Chapters</p>
+      <p class="muted">Default selection includes all chapters. Uncheck anything you want to skip.</p>
+      <form
+        class="chapter-selection-form"
+        hx-post="/jobs/{{ job.id }}/generate"
+        hx-target="#job-{{ job.id }}"
+        hx-swap="outerHTML"
+      >
+        <div class="chapter-tree">
+          {% for chapter in job.chapter_manifest %}
+            {% set chapter_index = chapter.index | int %}
+            {% set chapter_level = chapter.level | int %}
+            {% set chapter_level = chapter_level if chapter_level > 0 else 1 %}
+            <label class="chapter-option level-{{ chapter_level }}">
+              <span class="chapter-check">
+                <input
+                  type="checkbox"
+                  name="selected_chapters"
+                  value="{{ chapter_index }}"
+                  {% if not job.selected_chapters or chapter_index in job.selected_chapters %}checked{% endif %}
+                >
+              </span>
+              <span class="chapter-title">{{ chapter.title }}</span>
+              <span class="chapter-count">{{ chapter.paragraph_count }} text units</span>
+            </label>
+          {% endfor %}
+        </div>
+        <button type="submit">Generate Selected Chapters</button>
+      </form>
+    </section>
+  {% endif %}
+
+  {% if job.download_url %}
+    <a class="download" href="{{ job.download_url }}">Download {{ job.output_name }}</a>
+    {% if job.preview_url %}
+      <audio class="preview-player" controls preload="metadata" src="{{ job.preview_url }}"></audio>
+    {% endif %}
+  {% endif %}
+
+  {% if job.log_preview %}
+    <pre class="logs">{{ job.log_preview }}</pre>
+  {% endif %}
+
+  {% if job.remove_from_list %}
+    <script>
+      (function () {
+        const card = document.getElementById("job-{{ job.id }}");
+        if (!card) {
+          return;
+        }
+        const isInJobsList = Boolean(card.closest("#jobs"));
+        if (isInJobsList) {
+          card.remove();
+        }
+      })();
+    </script>
+  {% endif %}
+</div>

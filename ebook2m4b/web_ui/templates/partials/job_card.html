@@ -1,0 +1,57 @@
+<article
+  id="job-{{ job.id }}"
+  class="job-card status-{{ job.status }}"
+>
+  <div class="job-header">
+    <div>
+      <p class="muted">{{ job.source_name }}</p>
+      <h3>Conversion Job</h3>
+    </div>
+    <div class="job-actions">
+      {% if job.can_discard %}
+        <button
+          type="button"
+          class="danger-link"
+          hx-post="/jobs/{{ job.id }}/discard"
+          hx-target="#job-{{ job.id }}"
+          hx-swap="delete"
+          hx-confirm="Discard this job and remove generated artifacts?"
+        >
+          Discard
+        </button>
+      {% endif %}
+      <button
+        type="button"
+        class="small-link"
+        data-details-target="job-details-{{ job.id }}"
+        onclick="toggleJobDetails(event)"
+        aria-controls="job-details-{{ job.id }}"
+        aria-expanded="false"
+      >
+        Details
+      </button>
+    </div>
+  </div>
+
+  {% include "partials/job_live.html" %}
+
+  <section id="job-details-{{ job.id }}" class="job-details" hidden>
+    <p><strong>Engine:</strong> {{ job.engine }}</p>
+    <p><strong>Voice rate:</strong> {{ job.voice_rate }}</p>
+    <p><strong>Voice volume:</strong> {{ job.voice_volume }}</p>
+    <p><strong>Voice pitch:</strong> {{ job.voice_pitch }}</p>
+    <p><strong>Source:</strong> {{ job.source_path }}</p>
+    <p><strong>Created:</strong> {{ job.created_at }}</p>
+    {% if job.selected_chapter_total > 0 %}
+      <p><strong>Selected chapters:</strong> {{ job.selected_chapter_total }}</p>
+      <p><strong>Selected text units:</strong> {{ job.selected_paragraph_total }}</p>
+    {% endif %}
+    {% if job.speaker_meta %}
+      <p><strong>Language:</strong> {{ job.speaker_meta.language }}</p>
+      <p><strong>Gender:</strong> {{ job.speaker_meta.gender or 'Unknown' }}</p>
+      <p><strong>Quality:</strong> {{ job.speaker_meta.quality_label or 'n/a' }}</p>
+      <p><strong>Training:</strong> {{ job.speaker_meta.training_duration or 'n/a' }}</p>
+    {% endif %}
+    <a class="small-link detail-link" href="/jobs/{{ job.id }}">Open full job page</a>
+  </section>
+</article>

@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Step 1: Parse Source</h2>
+  <p class="muted">Parse first, verify chapters, then generate audio from your selected chapters.</p>
+  <form
+    class="job-form"
+    hx-post="/jobs/create"
+    hx-target="#jobs"
+    hx-swap="afterbegin"
+    enctype="multipart/form-data"
+  >
+    <section class="source-block">
+      <h3>Source</h3>
+
+      <div class="source-option" data-source-panel="upload">
+        <label class="source-choice">
+          <input
+            type="radio"
+            name="source_mode"
+            value="upload"
+            {% if defaults.source_mode == 'upload' %}checked{% endif %}
+          >
+          Upload EPUB or TXT
+        </label>
+        <input type="file" name="file" accept=".epub,.txt">
+      </div>
+
+      <div class="source-option" data-source-panel="existing">
+        <label class="source-choice">
+          <input
+            type="radio"
+            name="source_mode"
+            value="existing"
+            {% if defaults.source_mode == 'existing' %}checked{% endif %}
+          >
+          Pick existing source in /data
+        </label>
+        <select name="existing_path">
+          <option value="">(select file)</option>
+          {% for item in existing_files %}
+            <option value="{{ item }}">{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="source-option" data-source-panel="paste">
+        <label class="source-choice">
+          <input
+            type="radio"
+            name="source_mode"
+            value="paste"
+            {% if defaults.source_mode == 'paste' %}checked{% endif %}
+          >
+          Paste text chunk
+        </label>
+        <textarea name="pasted_text" rows="8" placeholder="Paste text here if you do not want to upload a file."></textarea>
+      </div>
+    </section>
+
+    <label>TTS engine
+      <select name="engine" id="engine-select">
+        {% for engine in engines %}
+          <option value="{{ engine.id }}" {% if engine.id == defaults.engine %}selected{% endif %}>{{ engine.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div id="edge-controls" class="edge-controls" hidden>
+      <div class="row">
+        <label>Edge locale filter
+          <input type="text" id="edge-locale-filter" value="{{ defaults.edge_locale_filter }}" placeholder="e.g. en-US or ja-JP">
+        </label>
+        <label>Voice rate
+          <input type="text" name="voice_rate" value="{{ defaults.voice_rate }}" placeholder="+0%">
+        </label>
+      </div>
+      <div class="row">
+        <label>Voice volume
+          <input type="text" name="voice_volume" value="{{ defaults.voice_volume }}" placeholder="+0%">
+        </label>
+        <label>Voice pitch
+          <input type="text" name="voice_pitch" value="{{ defaults.voice_pitch }}" placeholder="+0Hz">
+        </label>
+      </div>
+    </div>
+
+    <label>Speaker
+      <select name="speaker" id="speaker-select">
+        {% for speaker in speakers %}
+          <option
+            value="{{ speaker.id }}"
+            data-language="{{ speaker.language }}"
+            data-language-code="{{ speaker.language_code or '' }}"
+            data-gender="{{ speaker.gender or '' }}"
+            data-quality="{{ speaker.quality_label or '' }}"
+            data-training="{{ speaker.training_duration or '' }}"
+            {% if speaker.id == selected_speaker %}selected{% endif %}
+          >
+            {{ speaker.id }} - {{ speaker.language }} - {{ speaker.gender or 'Unknown' }}{% if speaker.quality_label %} - {{ speaker.quality_label }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div id="speaker-meta" class="speaker-meta"></div>
+
+    <label>Cover path in /data (optional)
+      <input type="text" name="cover_path" placeholder="inputs/mybook.png">
+    </label>
+
+    <div class="row">
+      <label>Speed
+        <input type="number" name="speed" step="0.1" value="{{ defaults.speed }}">
+      </label>
+      <label>Paragraph pause (ms)
+        <input type="number" name="paragraphpause" value="{{ defaults.paragraphpause }}">
+      </label>
+    </div>
+
+    <label class="checkbox">
+      <input type="checkbox" name="notitles" {% if defaults.notitles %}checked{% endif %}>
+      Skip chapter titles in speech
+    </label>
+
+    <button type="submit">Parse Chapters</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Jobs</h2>
+  <div class="jobs-toolbar">
+    <button
+      type="button"
+      class="danger-button"
+      hx-post="/jobs/cleanup"
+      hx-target="#maintenance-notice"
+      hx-swap="innerHTML"
+      hx-on::after-request="if(event.detail.successful){const jobs=document.getElementById('jobs'); if(jobs){jobs.innerHTML='';}}"
+      hx-confirm="Delete generated files and clear completed/discarded history?"
+    >
+      Clean Generated Files
+    </button>
+  </div>
+  <div id="maintenance-notice"></div>
+  <div id="jobs" class="jobs">
+    {% for job in jobs %}
+      {% include "partials/job_card.html" %}
+    {% endfor %}
+  </div>
+</section>
+
+<script src="/static/home.js"></script>
+{% endblock %}

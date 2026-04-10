@@ -1,0 +1,49 @@
+[project]
+name = "ebook2m4b"
+version = "0.1.0"
+description = "Modern Docker Compose EPUB/TXT to M4B converter with web UI and progress"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4",
+    "edge-tts",
+    "ebooklib",
+    "fastapi",
+    "jinja2",
+    "kokoro>=0.9.4",
+    "lxml",
+    "mutagen",
+    "nltk",
+    "numpy",
+    "pillow",
+    "pydantic",
+    "pydantic-settings",
+    "pydub",
+    "python-multipart",
+    "redis",
+    "rq",
+    "setuptools==79.0.1",
+    "sentencex",
+    "soundfile",
+    "sqlalchemy",
+    "tenacity",
+    "tqdm",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+ebook2m4b = "ebook2m4b.cli:main"
+ebook2m4b-web = "ebook2m4b.web_ui.app:run"
+ebook2m4b-worker = "ebook2m4b.worker:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ebook2m4b"]

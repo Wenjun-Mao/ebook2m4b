@@ -1,0 +1,9 @@
+.git
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.log
+data/work/
+data/results/
