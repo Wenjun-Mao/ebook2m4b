@@ -21,6 +21,7 @@ services:
       EBOOK2M4B_DATABASE_URL: sqlite:////data/ebook2m4b.db
       EBOOK2M4B_REDIS_URL: redis://redis:6379/0
       HF_HOME: ${EBOOK2M4B_HF_HOME:-/opt/huggingface}
+      HF_HUB_CACHE: ${EBOOK2M4B_HF_HUB_CACHE:-/opt/huggingface/hub}
       TRANSFORMERS_CACHE: ${EBOOK2M4B_TRANSFORMERS_CACHE:-/opt/huggingface}
       HF_HUB_OFFLINE: ${EBOOK2M4B_HF_HUB_OFFLINE:-1}
       NLTK_DATA: ${EBOOK2M4B_NLTK_DATA:-/opt/nltk_data}
@@ -43,6 +44,7 @@ services:
       EBOOK2M4B_DATABASE_URL: sqlite:////data/ebook2m4b.db
       EBOOK2M4B_REDIS_URL: redis://redis:6379/0
       HF_HOME: ${EBOOK2M4B_HF_HOME:-/opt/huggingface}
+      HF_HUB_CACHE: ${EBOOK2M4B_HF_HUB_CACHE:-/opt/huggingface/hub}
       TRANSFORMERS_CACHE: ${EBOOK2M4B_TRANSFORMERS_CACHE:-/opt/huggingface}
       HF_HUB_OFFLINE: ${EBOOK2M4B_HF_HUB_OFFLINE:-1}
       NLTK_DATA: ${EBOOK2M4B_NLTK_DATA:-/opt/nltk_data}

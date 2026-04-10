@@ -39,7 +39,7 @@ $dockerfilePath = Resolve-Setting -Name "DOCKERFILE_PATH" -Default (Join-Path $r
 
 $kokoroModelId = Resolve-Setting -Name "KOKORO_MODEL_ID" -Default "hexgrad/Kokoro-82M"
 $kokoroModelRevision = Resolve-Setting -Name "KOKORO_MODEL_REVISION" -Default "f3ff3571791e39611d31c381e3a41a3af07b4987"
-$preseedKokoro = Resolve-Setting -Name "PRESEED_KOKORO" -Default "1"
+$preseedKokoro = "1"
 
 if (-not (Test-Path -LiteralPath $dockerfilePath)) {
     Write-Error "Dockerfile not found at $dockerfilePath"
@@ -110,6 +110,7 @@ foreach ($tag in $tags) {
 Write-Host ""
 Write-Host "Suggested runtime env (already defaulted in compose.yaml):"
 Write-Host "  EBOOK2M4B_HF_HOME=/opt/huggingface"
+Write-Host "  EBOOK2M4B_HF_HUB_CACHE=/opt/huggingface/hub"
 Write-Host "  EBOOK2M4B_TRANSFORMERS_CACHE=/opt/huggingface"
 Write-Host "  EBOOK2M4B_NLTK_DATA=/opt/nltk_data"
 Write-Host "  EBOOK2M4B_HF_HUB_OFFLINE=1"

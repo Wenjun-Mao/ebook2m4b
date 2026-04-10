@@ -24,7 +24,7 @@ DOCKERFILE_PATH="${DOCKERFILE_PATH:-${REPO_ROOT}/Dockerfile}"
 
 KOKORO_MODEL_ID="${KOKORO_MODEL_ID:-hexgrad/Kokoro-82M}"
 KOKORO_MODEL_REVISION="${KOKORO_MODEL_REVISION:-f3ff3571791e39611d31c381e3a41a3af07b4987}"
-PRESEED_KOKORO="${PRESEED_KOKORO:-1}"
+PRESEED_KOKORO="1"
 
 if [[ ! -f "${DOCKERFILE_PATH}" ]]; then
   echo "Error: Dockerfile not found at ${DOCKERFILE_PATH}" >&2
@@ -93,6 +93,7 @@ done
 echo
 echo "Suggested runtime env (already defaulted in compose.yaml):"
 echo "  EBOOK2M4B_HF_HOME=/opt/huggingface"
+echo "  EBOOK2M4B_HF_HUB_CACHE=/opt/huggingface/hub"
 echo "  EBOOK2M4B_TRANSFORMERS_CACHE=/opt/huggingface"
 echo "  EBOOK2M4B_NLTK_DATA=/opt/nltk_data"
 echo "  EBOOK2M4B_HF_HUB_OFFLINE=1"

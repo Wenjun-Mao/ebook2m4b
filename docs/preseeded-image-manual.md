@@ -5,9 +5,12 @@ This guide shows how to build and push an ebook2m4b image that is ready to run w
 Default image target used in this project:
 - `ghcr.io/wenjun-mao/ebook2m4b` (single tag flow; default tag `latest`)
 
+The provided automation scripts always build a preseeded image (`PRESEED_KOKORO=1`).
+
 What gets preseeded in the image:
 - NLTK tokenizers: `punkt`, `punkt_tab`
 - Kokoro model snapshot: `hexgrad/Kokoro-82M` at pinned revision
+- spaCy English model: `en_core_web_sm`
 
 ## 1) Prerequisites
 
@@ -97,6 +100,7 @@ Set env vars before startup:
 export EBOOK2M4B_IMAGE_WEB=ghcr.io/wenjun-mao/ebook2m4b
 export EBOOK2M4B_IMAGE_WORKER=ghcr.io/wenjun-mao/ebook2m4b
 export EBOOK2M4B_HF_HOME=/opt/huggingface
+export EBOOK2M4B_HF_HUB_CACHE=/opt/huggingface/hub
 export EBOOK2M4B_TRANSFORMERS_CACHE=/opt/huggingface
 export EBOOK2M4B_NLTK_DATA=/opt/nltk_data
 export EBOOK2M4B_HF_HUB_OFFLINE=1
@@ -114,6 +118,7 @@ PowerShell equivalent:
 ```powershell
 $env:EBOOK2M4B_IMAGE_WEB = "ghcr.io/wenjun-mao/ebook2m4b"
 $env:EBOOK2M4B_IMAGE_WORKER = "ghcr.io/wenjun-mao/ebook2m4b"
+$env:EBOOK2M4B_HF_HUB_CACHE = "/opt/huggingface/hub"
 docker compose pull web worker
 docker compose up -d
 ```

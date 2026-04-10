@@ -37,6 +37,8 @@ namespaces = {
 
 warnings.filterwarnings("ignore", module="ebooklib.epub")
 
+KOKORO_REPO_ID = "hexgrad/Kokoro-82M"
+
 def ensure_punkt():
     try:
         nltk.data.find("tokenizers/punkt")
@@ -350,6 +352,16 @@ def conditional_sentence_case(sent):
             break  # No need to continue checking once a match is found
     return sent
 
+
+def _resolve_kokoro_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return torch.device("xpu")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
 def kokoro_read(paragraph, speaker, filename, pipeline, speed):
     audio_segments = []
     sentences = process_large_text(paragraph)
@@ -362,13 +374,16 @@ def kokoro_read(paragraph, speaker, filename, pipeline, speed):
     soundfile.write(filename, final_audio, 24000)
 
 def read_book(book_contents, speaker, paragraphpause, speed, notitles, progress_callback=None, cancel_check=None):
-    current_device_name = torch.get_default_device() if torch.get_default_device() else 'cpu'
-    current_device = torch.device(current_device_name)
+    current_device = _resolve_kokoro_device()
     print(f"Attempting to use device: {current_device}")
 
-    pipeline = KPipeline(lang_code=speaker[0])
+    pipeline = KPipeline(
+        lang_code=speaker[0],
+        repo_id=KOKORO_REPO_ID,
+        device=str(current_device),
+    )
 
-    # Explicitly move the model to the current default device (e.g., 'xpu')
+    # Explicitly move the model to the selected runtime device.
     if hasattr(pipeline, 'model') and pipeline.model is not None:
         try:
             pipeline.model.to(current_device)
