@@ -28,11 +28,6 @@ REFS_DIR="${REPO_CACHE_DIR}/refs"
 
 mkdir -p "${SNAPSHOT_DIR}" "${REFS_DIR}"
 
-AUTH_HEADER=()
-if [[ -n "${HF_TOKEN:-}" ]]; then
-  AUTH_HEADER=(-H "Authorization: Bearer ${HF_TOKEN}")
-fi
-
 echo "Fetching model manifest for ${MODEL_ID}@${REVISION} ..."
 META_JSON="$(mktemp)"
 cleanup() {
@@ -40,7 +35,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-curl -fLsS "${AUTH_HEADER[@]}" \
+curl -fLsS \
   "https://huggingface.co/api/models/${MODEL_ID}/revision/${REVISION}" \
   -o "${META_JSON}"
 
@@ -64,7 +59,7 @@ for rel_path in "${FILES[@]}"; do
 
   tmp_path="${target_path}.part"
   echo "[get ] ${rel_path}"
-  curl -fL "${AUTH_HEADER[@]}" \
+  curl -fL \
     "https://huggingface.co/${MODEL_ID}/resolve/${REVISION}/${rel_path}" \
     -o "${tmp_path}"
   mv "${tmp_path}" "${target_path}"

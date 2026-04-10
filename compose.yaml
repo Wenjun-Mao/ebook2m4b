@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
 
   web:
+    image: ${EBOOK2M4B_IMAGE_WEB:-ghcr.io/wenjun-mao/ebook2m4b}
     build:
       context: .
       dockerfile: Dockerfile
@@ -19,8 +20,10 @@ services:
       EBOOK2M4B_DATA_DIR: /data
       EBOOK2M4B_DATABASE_URL: sqlite:////data/ebook2m4b.db
       EBOOK2M4B_REDIS_URL: redis://redis:6379/0
-      HF_HOME: /data/cache/huggingface
-      TRANSFORMERS_CACHE: /data/cache/huggingface
+      HF_HOME: ${EBOOK2M4B_HF_HOME:-/opt/huggingface}
+      TRANSFORMERS_CACHE: ${EBOOK2M4B_TRANSFORMERS_CACHE:-/opt/huggingface}
+      HF_HUB_OFFLINE: ${EBOOK2M4B_HF_HUB_OFFLINE:-1}
+      NLTK_DATA: ${EBOOK2M4B_NLTK_DATA:-/opt/nltk_data}
       PYTHONUNBUFFERED: "1"
     volumes:
       - ${EBOOK2M4B_DATA_HOST_PATH:-./data}:/data
@@ -28,6 +31,7 @@ services:
       - redis
 
   worker:
+    image: ${EBOOK2M4B_IMAGE_WORKER:-ghcr.io/wenjun-mao/ebook2m4b}
     build:
       context: .
       dockerfile: Dockerfile
@@ -38,8 +42,10 @@ services:
       EBOOK2M4B_DATA_DIR: /data
       EBOOK2M4B_DATABASE_URL: sqlite:////data/ebook2m4b.db
       EBOOK2M4B_REDIS_URL: redis://redis:6379/0
-      HF_HOME: /data/cache/huggingface
-      TRANSFORMERS_CACHE: /data/cache/huggingface
+      HF_HOME: ${EBOOK2M4B_HF_HOME:-/opt/huggingface}
+      TRANSFORMERS_CACHE: ${EBOOK2M4B_TRANSFORMERS_CACHE:-/opt/huggingface}
+      HF_HUB_OFFLINE: ${EBOOK2M4B_HF_HUB_OFFLINE:-1}
+      NLTK_DATA: ${EBOOK2M4B_NLTK_DATA:-/opt/nltk_data}
       PYTHONUNBUFFERED: "1"
     volumes:
       - ${EBOOK2M4B_DATA_HOST_PATH:-./data}:/data
