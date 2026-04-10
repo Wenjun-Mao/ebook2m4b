@@ -3,53 +3,77 @@ set -Eeuo pipefail
 
 MODEL_ID="${MODEL_ID:-hexgrad/Kokoro-82M}"
 REVISION="${REVISION:-f3ff3571791e39611d31c381e3a41a3af07b4987}"
-SERVICE="${SERVICE:-web}"
+REF_NAME="${REF_NAME:-main}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 DATA_DIR="${DATA_DIR:-${REPO_ROOT}/data}"
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "Error: docker is not installed." >&2
+MISSING_TOOLS=()
+command -v curl >/dev/null 2>&1 || MISSING_TOOLS+=("curl")
+command -v jq >/dev/null 2>&1 || MISSING_TOOLS+=("jq")
+
+if [[ "${#MISSING_TOOLS[@]}" -gt 0 ]]; then
+  echo "Error: missing required tools: ${MISSING_TOOLS[*]}" >&2
+  echo "Reminder: install prerequisites on Ubuntu with:" >&2
+  echo "  sudo apt-get update && sudo apt-get install -y curl jq" >&2
   exit 1
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  echo "Error: docker compose is not available." >&2
+MODEL_KEY="${MODEL_ID//\//--}"
+CACHE_ROOT="${DATA_DIR}/cache/huggingface"
+REPO_CACHE_DIR="${CACHE_ROOT}/hub/models--${MODEL_KEY}"
+SNAPSHOT_DIR="${REPO_CACHE_DIR}/snapshots/${REVISION}"
+REFS_DIR="${REPO_CACHE_DIR}/refs"
+
+mkdir -p "${SNAPSHOT_DIR}" "${REFS_DIR}"
+
+AUTH_HEADER=()
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  AUTH_HEADER=(-H "Authorization: Bearer ${HF_TOKEN}")
+fi
+
+echo "Fetching model manifest for ${MODEL_ID}@${REVISION} ..."
+META_JSON="$(mktemp)"
+cleanup() {
+  rm -f "${META_JSON}"
+}
+trap cleanup EXIT
+
+curl -fLsS "${AUTH_HEADER[@]}" \
+  "https://huggingface.co/api/models/${MODEL_ID}/revision/${REVISION}" \
+  -o "${META_JSON}"
+
+mapfile -t FILES < <(jq -r '.siblings[].rfilename' "${META_JSON}")
+
+if [[ "${#FILES[@]}" -eq 0 ]]; then
+  echo "Error: no files returned for ${MODEL_ID}@${REVISION}." >&2
   exit 1
 fi
 
-mkdir -p "${DATA_DIR}/cache/huggingface"
+echo "Downloading ${#FILES[@]} files to ${SNAPSHOT_DIR} ..."
+for rel_path in "${FILES[@]}"; do
+  target_path="${SNAPSHOT_DIR}/${rel_path}"
+  target_dir="$(dirname "${target_path}")"
+  mkdir -p "${target_dir}"
 
-# Compose reads this variable in compose.yaml for the /data bind mount.
-export EBOOK2M4B_DATA_HOST_PATH="${DATA_DIR}"
+  if [[ -s "${target_path}" ]]; then
+    echo "[skip] ${rel_path}"
+    continue
+  fi
 
-cd "${REPO_ROOT}"
+  tmp_path="${target_path}.part"
+  echo "[get ] ${rel_path}"
+  curl -fL "${AUTH_HEADER[@]}" \
+    "https://huggingface.co/${MODEL_ID}/resolve/${REVISION}/${rel_path}" \
+    -o "${tmp_path}"
+  mv "${tmp_path}" "${target_path}"
+done
 
-echo "Preseeding ${MODEL_ID}@${REVISION} into ${DATA_DIR}/cache/huggingface ..."
+printf '%s' "${REVISION}" > "${REFS_DIR}/${REF_NAME}"
 
-# Use the web service by default so preseeding works even on hosts without NVIDIA runtime.
-docker compose run --rm --no-deps \
-  -e HF_HOME=/data/cache/huggingface \
-  -e TRANSFORMERS_CACHE=/data/cache/huggingface \
-  -e MODEL_ID="${MODEL_ID}" \
-  -e REVISION="${REVISION}" \
-  -e HF_TOKEN \
-  "${SERVICE}" \
-  python - <<'PY'
-import os
-from huggingface_hub import snapshot_download
-
-model_id = os.environ["MODEL_ID"]
-revision = os.environ.get("REVISION") or None
-
-snapshot_path = snapshot_download(
-    repo_id=model_id,
-    revision=revision,
-    cache_dir="/data/cache/huggingface",
-    local_files_only=False,
-)
-print(f"Cached at: {snapshot_path}")
-PY
-
-echo "Done. Your host cache is now preseeded."
+echo "Done. Hugging Face cache preseeded at: ${REPO_CACHE_DIR}"
+echo "Ref written: ${REFS_DIR}/${REF_NAME} -> ${REVISION}"
+echo "Use these env vars at runtime:"
+echo "  HF_HOME=${CACHE_ROOT}"
+echo "  TRANSFORMERS_CACHE=${CACHE_ROOT}"
